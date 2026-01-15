@@ -1,0 +1,23 @@
+[application]
+name = "website"
+version = "0.1.0"
+authors = ["Hell HBBD <paulyu602@gmail.com>"]
+edition = "2021"
+
+[web.app]
+title = "schedule"
+out_dir = "dist"
+
+[web.resource]
+dir = "assets"
+style = []
+script = []
+
+[web.resource.dev]
+script = []
+
+[web.watcher]
+watch = [
+    "src",
+    "assets",
+]

@@ -1,0 +1,10 @@
+pub mod edit_page;
+pub mod histogram_page;
+pub mod main_page;
+pub mod task_form;
+pub mod task_item;
+pub mod tag_color;
+pub mod tag_input;
+pub mod use_details_close;
+pub mod use_gesture;
+pub mod notification;

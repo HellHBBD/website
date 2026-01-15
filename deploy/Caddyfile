@@ -1,0 +1,63 @@
+{
+	admin off
+}
+
+website.hellhbbd.ip-ddns.com {
+	tls {
+		protocols tls1.2 tls1.3
+		key_type rsa2048
+	}
+
+	# 掃描/敏感路徑阻擋
+	@blocked {
+		path /.git* /.env* /.ht* /.DS_Store
+		path /wp-admin* /wp-login.php /phpmyadmin* /adminer.php /cgi-bin*
+		path *.sql *.bak *.zip *.tar.gz *.old
+	}
+	respond @blocked 404
+
+	# 安全標頭（SSR + WASM 可用）
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+	}
+
+	# 全站 request body 上限（大一點，避免一般請求被擋）
+	request_body {
+		max_size 1MB
+	}
+
+	# redirect 端點（從 example 加回）
+	handle_path /redirect {
+		redir https://raw.githubusercontent.com/HellHBBD/dotfiles/refs/heads/exam/install.ps1
+	}
+
+	# API：保留 /api 前綴（用 handle，不用 handle_path），並加回較小 body size + timeout
+	handle /api/* {
+		request_body {
+			max_size 256KB
+		}
+		reverse_proxy 127.0.0.1:8080 {
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	# 靜態資源（從 public 提供）
+	handle /assets/* {
+		root * /home/hellhbbd/website/public
+		file_server
+	}
+
+	# 其他都交給 server（SSR）
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}
