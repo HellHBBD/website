@@ -7,7 +7,7 @@ cargo test
 echo "Running clippy..."
 cargo clippy
 
-if [ -f Caddyfile ]; then
+if [ -f deploy/Caddyfile ]; then
   echo "Validating Caddyfile..."
-  caddy validate --config Caddyfile
+  caddy validate --config deploy/Caddyfile
 fi

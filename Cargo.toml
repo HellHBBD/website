@@ -32,7 +32,7 @@ web-sys = { version = "0.3.83", features = [
 ] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.48.0", features = ["fs", "macros"] }
+tokio = { version = "1.48.0", features = ["fs", "io-util", "macros", "sync"] }
 
 [features]
 default = ["web", "server"]

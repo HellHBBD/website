@@ -1,10 +1,27 @@
-use dioxus::prelude::*;
 use crate::category::normalize_category_label;
 use crate::task::Task;
+use dioxus::prelude::*;
+
+const MAX_TASKS: usize = 500;
+const MAX_NAME_LENGTH: usize = 200;
+const MAX_CATEGORIES_PER_TASK: usize = 32;
+const MAX_CATEGORY_LENGTH: usize = 64;
+const MAX_INTERVAL_DAYS: u32 = 3_650;
+const MAX_COMPLETED_COUNT: u32 = 1_000_000;
+const MIN_GROWTH_RATE: f64 = 0.1;
+const MAX_GROWTH_RATE: f64 = 10.0;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn storage_file() -> String {
     std::env::var("TASKS_STORAGE_FILE").unwrap_or_else(|_| "tasks.json".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn task_storage_lock() -> &'static tokio::sync::Mutex<()> {
+    use std::sync::OnceLock;
+
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,15 +43,75 @@ fn normalize_tasks(tasks: &mut [Task]) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn validate_tasks(tasks: &[Task]) -> Result<(), ServerFnError> {
+    use std::collections::HashSet;
+
+    if tasks.len() > MAX_TASKS {
+        return Err(ServerFnError::new("Invalid task data"));
+    }
+
+    let mut ids = HashSet::with_capacity(tasks.len());
+    for task in tasks {
+        if task.name.trim().is_empty()
+            || task.name.chars().count() > MAX_NAME_LENGTH
+            || task.categories.len() > MAX_CATEGORIES_PER_TASK
+            || task.categories.iter().any(|category| {
+                category.chars().count() > MAX_CATEGORY_LENGTH || category.trim().is_empty()
+            })
+            || task.interval == 0
+            || task.interval > MAX_INTERVAL_DAYS
+            || task
+                .date
+                .checked_add_signed(chrono::Duration::days(i64::from(task.interval)))
+                .is_none()
+            || !task.growth_rate.is_finite()
+            || !(MIN_GROWTH_RATE..=MAX_GROWTH_RATE).contains(&task.growth_rate)
+            || task.completed_count > MAX_COMPLETED_COUNT
+            || !ids.insert(task.id)
+        {
+            return Err(ServerFnError::new("Invalid task data"));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn write_tasks_to_disk(tasks: &[Task]) -> Result<(), ServerFnError> {
     use tokio::fs;
+    use tokio::io::AsyncWriteExt;
 
-    let json = serde_json::to_string(tasks)
-        .map_err(|e| ServerFnError::new(format!("Failed to serialize JSON: {}", e)))?;
+    let json = serde_json::to_string(tasks).map_err(|error| {
+        error!("Failed to serialize task data: {error}");
+        ServerFnError::new("Unable to save task data")
+    })?;
+    let storage_file = storage_file();
+    let temporary_file = format!("{storage_file}.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
 
-    fs::write(storage_file(), json)
+    let mut file = options.open(&temporary_file).await.map_err(|error| {
+        error!("Failed to open temporary task storage file: {error}");
+        ServerFnError::new("Unable to save task data")
+    })?;
+    file.write_all(json.as_bytes()).await.map_err(|error| {
+        error!("Failed to write temporary task storage file: {error}");
+        ServerFnError::new("Unable to save task data")
+    })?;
+    file.sync_all().await.map_err(|error| {
+        error!("Failed to sync temporary task storage file: {error}");
+        ServerFnError::new("Unable to save task data")
+    })?;
+    drop(file);
+
+    fs::rename(&temporary_file, &storage_file)
         .await
-        .map_err(|e| ServerFnError::new(format!("Failed to save JSON: {}", e)))?;
+        .map_err(|error| {
+            error!("Failed to replace task storage file: {error}");
+            ServerFnError::new("Unable to save task data")
+        })?;
 
     Ok(())
 }
@@ -48,11 +125,9 @@ async fn read_tasks_from_disk() -> Result<Vec<Task>, ServerFnError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Vec::new());
         }
-        Err(e) => {
-            return Err(ServerFnError::new(format!(
-                "Failed to read tasks file: {}",
-                e
-            )));
+        Err(error) => {
+            error!("Failed to read task storage file: {error}");
+            return Err(ServerFnError::new("Unable to read task data"));
         }
     };
 
@@ -60,8 +135,10 @@ async fn read_tasks_from_disk() -> Result<Vec<Task>, ServerFnError> {
         return Ok(Vec::new());
     }
 
-    serde_json::from_str(&content)
-        .map_err(|e| ServerFnError::new(format!("Failed to parse JSON: {}", e)))
+    serde_json::from_str(&content).map_err(|error| {
+        error!("Failed to parse task storage JSON: {error}");
+        ServerFnError::new("Unable to read task data")
+    })
 }
 
 /// Website -> Server
@@ -70,8 +147,10 @@ pub async fn upload(data: Vec<Task>) -> Result<(), ServerFnError> {
     info!("Uploading tasks");
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let _guard = task_storage_lock().lock().await;
         let mut data = data;
         normalize_tasks(&mut data);
+        validate_tasks(&data)?;
         write_tasks_to_disk(&data).await?;
     }
     Ok(())
@@ -83,10 +162,14 @@ pub async fn download() -> Result<Vec<Task>, ServerFnError> {
     use chrono::Local;
     info!("[{}] --- Starting download ---", Local::now());
     #[cfg(not(target_arch = "wasm32"))]
-    let result = read_tasks_from_disk().await.map(|mut tasks| {
-        normalize_tasks(&mut tasks);
-        tasks
-    });
+    let result = {
+        let _guard = task_storage_lock().lock().await;
+        read_tasks_from_disk().await.and_then(|mut tasks| {
+            normalize_tasks(&mut tasks);
+            validate_tasks(&tasks)?;
+            Ok(tasks)
+        })
+    };
     #[cfg(not(target_arch = "wasm32"))]
     info!("[{}] --- Finished download ---", Local::now());
     #[cfg(not(target_arch = "wasm32"))]
@@ -98,14 +181,15 @@ pub async fn download() -> Result<Vec<Task>, ServerFnError> {
 #[server(prefix = "/api", endpoint = "check_and_update_tasks")]
 pub async fn check_and_update_tasks() -> Result<Vec<Task>, ServerFnError> {
     use chrono::Local;
-    info!(
-        "[{}] --- Starting check_and_update_tasks ---",
-        Local::now()
-    );
+    info!("[{}] --- Starting check_and_update_tasks ---", Local::now());
+    #[cfg(not(target_arch = "wasm32"))]
+    let _guard = task_storage_lock().lock().await;
     #[cfg(not(target_arch = "wasm32"))]
     let mut tasks = read_tasks_from_disk().await?;
     #[cfg(not(target_arch = "wasm32"))]
     normalize_tasks(&mut tasks);
+    #[cfg(not(target_arch = "wasm32"))]
+    validate_tasks(&tasks)?;
     #[cfg(target_arch = "wasm32")]
     let mut tasks: Vec<Task> = Vec::new();
 
@@ -131,20 +215,17 @@ pub async fn check_and_update_tasks() -> Result<Vec<Task>, ServerFnError> {
         );
     }
 
-    info!(
-        "[{}] --- Finished check_and_update_tasks ---",
-        Local::now()
-    );
+    info!("[{}] --- Finished check_and_update_tasks ---", Local::now());
     Ok(tasks)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use chrono::{Duration, NaiveDate};
     use crate::test_support::{
         env_lock, restore_storage_file, set_storage_file, temp_storage_path,
     };
+    use chrono::{Duration, NaiveDate};
     use uuid::Uuid;
 
     fn sample_task(date: NaiveDate) -> Task {
@@ -158,6 +239,25 @@ mod tests {
             created_at: None,
             categories: Vec::new(),
         }
+    }
+
+    #[test]
+    fn validate_tasks_rejects_unsafe_values() {
+        let today = chrono::Local::now().date_naive();
+        let mut task = sample_task(today);
+        task.name = " ".to_string();
+        assert!(validate_tasks(&[task]).is_err());
+
+        let mut task = sample_task(today);
+        task.growth_rate = f64::INFINITY;
+        assert!(validate_tasks(&[task]).is_err());
+
+        let task = sample_task(today);
+        assert!(validate_tasks(&[task.clone(), task]).is_err());
+
+        let mut task = sample_task(chrono::NaiveDate::MAX);
+        task.interval = 1;
+        assert!(validate_tasks(&[task]).is_err());
     }
 
     #[tokio::test]
@@ -178,9 +278,7 @@ mod tests {
         let path = temp_storage_path();
         let previous = set_storage_file(&path);
 
-        tokio::fs::write(&path, "")
-            .await
-            .expect("write empty file");
+        tokio::fs::write(&path, "").await.expect("write empty file");
 
         let result = read_tasks_from_disk().await.expect("read ok");
         restore_storage_file(previous);

@@ -12,7 +12,6 @@ NC='\033[0m' # No Color
 
 # 設置你的命令
 WEB_SERVER_CMD="./website"
-CADDY_CMD="caddy run --config Caddyfile"
 
 # 進度顯示函數
 show_progress() {
@@ -69,6 +68,9 @@ show_progress "啟動服務"
 # 顯示完整 panic backtrace，方便追查異常崩潰
 export RUST_BACKTRACE=1
 export RUST_LOG=info
+# Caddy is the only public entry point and enforces authentication.
+export IP=127.0.0.1
+export PORT=8080
 
 # 檢查 Web Server 執行檔是否存在
 if [ ! -x "$WEB_SERVER_CMD" ]; then
@@ -89,9 +91,12 @@ if [ ! -f "Caddyfile" ]; then
     exit 1
 fi
 
+: "${CADDY_BASIC_AUTH_USER:?CADDY_BASIC_AUTH_USER must be set}"
+: "${CADDY_BASIC_AUTH_HASH:?CADDY_BASIC_AUTH_HASH must be set}"
+
 # 啟動 Caddy
 show_progress "啟動 Caddy"
-$CADDY_CMD &
+caddy run --config Caddyfile &
 CADDY_PID=$!
 
 # 檢查 Caddy 是否成功啟動

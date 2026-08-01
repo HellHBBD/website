@@ -2,7 +2,7 @@
 	admin off
 }
 
-website.hellhbbd.ip-ddns.com {
+website.hellhbbd.pp.ua {
 	tls {
 		protocols tls1.2 tls1.3
 		key_type rsa2048
@@ -16,6 +16,12 @@ website.hellhbbd.ip-ddns.com {
 	}
 	respond @blocked 404
 
+	# Private task data is protected before any route handler runs.
+	@private_routes path /schedule /schedule/* /api/*
+	basic_auth @private_routes {
+		{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
+	}
+
 	# 安全標頭（SSR + WASM 可用）
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -24,7 +30,12 @@ website.hellhbbd.ip-ddns.com {
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Cross-Origin-Resource-Policy "same-origin"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+	}
+
+	log {
+		output stdout
+		format json
 	}
 
 	# 全站 request body 上限（大一點，避免一般請求被擋）

@@ -93,6 +93,7 @@ pub fn TaskForm(props: TaskFormProps) -> Element {
                                 r#type: "text",
                                 class: "filter-input",
                                 placeholder: "新增分類...",
+                                maxlength: "64",
                                 value: "{new_category_input}",
                                 oninput: move |evt| new_category_input.set(evt.value()),
                                 onkeydown: move |evt| {
@@ -194,6 +195,8 @@ pub fn TaskForm(props: TaskFormProps) -> Element {
                         "間隔 (天)"
                         input {
                             r#type: "number",
+                            min: "1",
+                            max: "3650",
                             value: "{task_state.read().interval}",
                             oninput: move |evt| {
                                 if let Ok(interval) = evt.value().parse::<u32>() {
@@ -207,6 +210,8 @@ pub fn TaskForm(props: TaskFormProps) -> Element {
                         "成長率"
                         input {
                             r#type: "number",
+                            min: "0.1",
+                            max: "10",
                             step: "0.1",
                             value: "{task_state.read().growth_rate}",
                             oninput: move |evt| {
@@ -221,6 +226,8 @@ pub fn TaskForm(props: TaskFormProps) -> Element {
                         "完成次數"
                         input {
                             r#type: "number",
+                            min: "0",
+                            max: "1000000",
                             value: "{task_state.read().completed_count}",
                             oninput: move |evt| {
                                 if let Ok(completed_count) = evt.value().parse::<u32>() {
