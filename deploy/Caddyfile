@@ -12,29 +12,23 @@ website.hellhbbd.pp.ua {
 	@blocked {
 		path /.git* /.env* /.ht* /.DS_Store
 		path /wp-admin* /wp-login.php /phpmyadmin* /adminer.php /cgi-bin*
-		path *.sql *.bak *.zip *.tar.gz *.old
+		path /tasks.json* *.sql *.bak *.zip *.tar.gz *.old
 	}
-	respond @blocked 404
 
-	# Private task data is protected before any route handler runs.
 	@private_routes path /schedule /schedule/* /api/*
-	basic_auth @private_routes {
-		{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
-	}
-	header @private_routes Cache-Control "no-store"
-
-	# Browser requests to stateful endpoints must originate from this site.
 	@cross_site_api {
 		path /api/*
 		header Sec-Fetch-Site cross-site
 	}
-	respond @cross_site_api 403
 	@invalid_api_origin {
 		path /api/*
 		header Origin *
 		not header Origin https://website.hellhbbd.pp.ua
 	}
-	respond @invalid_api_origin 403
+	@invalid_api_method {
+		path /api/*
+		not method POST
+	}
 
 	# 安全標頭（SSR + WASM 可用）
 	header {
@@ -57,37 +51,60 @@ website.hellhbbd.pp.ua {
 		}
 	}
 
-	# 全站 request body 上限（大一點，避免一般請求被擋）
-	request_body {
-		max_size 1MB
-	}
-
-	# redirect 端點（從 example 加回）
-	handle_path /redirect {
-		redir https://raw.githubusercontent.com/HellHBBD/dotfiles/refs/heads/exam/install.ps1
-	}
-
-	# API：保留 /api 前綴（用 handle，不用 handle_path），並加回較小 body size + timeout
-	handle /api/* {
+	# Route preserves this security-critical handler order.
+	route {
+		# 全站 request body 上限（大一點，避免一般請求被擋）
 		request_body {
-			max_size 256KB
+			max_size 1MB
 		}
-		reverse_proxy 127.0.0.1:8080 {
-			transport http {
-				dial_timeout 5s
-				response_header_timeout 30s
+
+		# Private task data is protected before route-specific handling.
+		header @private_routes Cache-Control "no-store"
+		basic_auth @private_routes {
+			{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
+		}
+
+		handle @blocked {
+			respond 404
+		}
+		handle @cross_site_api {
+			respond 403
+		}
+		handle @invalid_api_origin {
+			respond 403
+		}
+		handle @invalid_api_method {
+			header Allow "POST"
+			respond 405
+		}
+
+		# redirect 端點（從 example 加回）
+		handle_path /redirect {
+			redir https://raw.githubusercontent.com/HellHBBD/dotfiles/refs/heads/exam/install.ps1
+		}
+
+		# API：保留 /api 前綴（用 handle，不用 handle_path），並加回較小 body size + timeout
+		handle /api/* {
+			request_body {
+				max_size 256KB
+			}
+			reverse_proxy 127.0.0.1:8080 {
+				transport http {
+					dial_timeout 5s
+					response_header_timeout 30s
+				}
 			}
 		}
-	}
 
-	# 靜態資源（從 public 提供）
-	handle /assets/* {
-		root * /home/hellhbbd/website/public
-		file_server
-	}
+		# 靜態資源（從 public 提供）
+		handle /assets/* {
+			root * /home/hellhbbd/website/public
+			file_server
+		}
 
-	# 其他都交給 server（SSR）
-	handle {
-		reverse_proxy 127.0.0.1:8080
+		# 其他都交給 server（SSR）
+		handle {
+			reverse_proxy 127.0.0.1:8080
+		}
 	}
 }
