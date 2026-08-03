@@ -21,6 +21,20 @@ website.hellhbbd.pp.ua {
 	basic_auth @private_routes {
 		{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
 	}
+	header @private_routes Cache-Control "no-store"
+
+	# Browser requests to stateful endpoints must originate from this site.
+	@cross_site_api {
+		path /api/*
+		header Sec-Fetch-Site cross-site
+	}
+	respond @cross_site_api 403
+	@invalid_api_origin {
+		path /api/*
+		header Origin *
+		not header Origin https://website.hellhbbd.pp.ua
+	}
+	respond @invalid_api_origin 403
 
 	# 安全標頭（SSR + WASM 可用）
 	header {
@@ -35,7 +49,12 @@ website.hellhbbd.pp.ua {
 
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+			}
+		}
 	}
 
 	# 全站 request body 上限（大一點，避免一般請求被擋）

@@ -98,9 +98,13 @@ echo -e "${PURPLE}來源: ${WHITE}${DEPLOY_DIR}${NC}"
 echo -e "${PURPLE}目標: ${WHITE}${DEST_DIR}${NC}"
 
 rsync -avh --progress --delete \
-    --exclude 'tasks.json' \
-    --filter 'protect tasks.json' \
-    "${DEPLOY_DIR}/" "${DEST_DIR}/"
+	--exclude '.env' \
+	--exclude 'tasks.json' \
+	--exclude 'tasks.json.tmp' \
+	--filter 'protect .env' \
+	--filter 'protect tasks.json' \
+	--filter 'protect tasks.json.tmp' \
+	"${DEPLOY_DIR}/" "${DEST_DIR}/"
 
 if [ $? -eq 0 ]; then
     show_success "同步完成"

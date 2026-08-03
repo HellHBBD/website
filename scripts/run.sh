@@ -12,6 +12,12 @@ NC='\033[0m' # No Color
 
 # 設置你的命令
 WEB_SERVER_CMD="./website"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! cd "$SCRIPT_DIR"; then
+    echo "Unable to enter the deployment directory" >&2
+    exit 1
+fi
 
 # 進度顯示函數
 show_progress() {
@@ -65,8 +71,8 @@ trap cleanup INT TERM EXIT
 
 show_progress "啟動服務"
 
-# 顯示完整 panic backtrace，方便追查異常崩潰
-export RUST_BACKTRACE=1
+# Do not expose detailed panic information in production logs.
+export RUST_BACKTRACE=0
 export RUST_LOG=info
 # Caddy is the only public entry point and enforces authentication.
 export IP=127.0.0.1
@@ -91,6 +97,19 @@ if [ ! -f "Caddyfile" ]; then
     exit 1
 fi
 
+# Load the deployment-only Caddy credentials regardless of the caller's directory.
+if [ ! -r "$SCRIPT_DIR/.env" ]; then
+    show_error ".env 不存在或無法讀取"
+    exit 1
+fi
+
+set -a
+if ! . "$SCRIPT_DIR/.env"; then
+    set +a
+    show_error ".env 載入失敗"
+    exit 1
+fi
+set +a
 : "${CADDY_BASIC_AUTH_USER:?CADDY_BASIC_AUTH_USER must be set}"
 : "${CADDY_BASIC_AUTH_HASH:?CADDY_BASIC_AUTH_HASH must be set}"
 
